@@ -4,6 +4,7 @@ import math
 import numpy as np
 
 from keras.src import backend
+from keras.src import ops
 from keras.src import tree
 from keras.src.trainers.data_adapters import data_adapter_utils
 from keras.src.utils.module_utils import tensorflow as tf
@@ -333,6 +334,7 @@ def can_slice_array(x):
         or data_adapter_utils.is_pandas_data_frame(x)
         or data_adapter_utils.is_pandas_series(x)
         or hasattr(x, "__array__")
+        or ops.is_tensor(x)
     )
 
 
@@ -394,6 +396,16 @@ def convert_to_sliceable(arrays, target_backend=None):
             sliceable_class = ScipySparseSliceable
         elif hasattr(x, "__array__"):
             x = np.asarray(x)
+            sliceable_class = NumpySliceable
+        elif ops.is_tensor(x):
+            # Generic fallback for pluggable backend tensors (e.g. MLX).
+            try:
+                res = np.asarray(x)
+                if res.dtype == object:
+                    raise ValueError("np.asarray returned an object array")
+                x = res
+            except (ValueError, TypeError, RuntimeError):
+                x = ops.convert_to_numpy(x)
             sliceable_class = NumpySliceable
         else:
             raise ValueError(
