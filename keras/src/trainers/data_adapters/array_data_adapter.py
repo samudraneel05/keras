@@ -124,6 +124,14 @@ class ArrayDataAdapter(DataAdapter):
 
         return self._get_iterator(slice_and_convert_to_numpy, inputs)
 
+    def get_native_iterator(self):
+        inputs = array_slicing.convert_to_sliceable(self._inputs)
+
+        def slice_array(sliceable, indices=None):
+            return sliceable[indices]
+
+        return self._get_iterator(slice_array, inputs)
+
     def get_tf_dataset(self):
         from keras.src.utils.module_utils import tensorflow as tf
 

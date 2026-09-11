@@ -109,6 +109,33 @@ class NumpySliceable(Sliceable):
     pass
 
 
+class NativeArraySliceable(Sliceable):
+    def __getitem__(self, indices):
+        if not isinstance(indices, slice):
+            indices = backend.ops.convert_to_tensor(indices)
+        return self.array[indices]
+
+    @classmethod
+    def cast(cls, x, dtype):
+        return backend.ops.cast(x, dtype)
+
+    @classmethod
+    def convert_to_numpy(cls, x):
+        return backend.ops.convert_to_numpy(x)
+
+    @classmethod
+    def convert_to_tf_dataset_compatible(cls, x):
+        raise NotImplementedError
+
+    @classmethod
+    def convert_to_jax_compatible(cls, x):
+        raise NotImplementedError
+
+    @classmethod
+    def convert_to_torch_compatible(cls, x):
+        raise NotImplementedError
+
+
 class TensorflowSliceable(Sliceable):
     def __getitem__(self, indices):
         from keras.src.utils.module_utils import tensorflow as tf
@@ -332,8 +359,8 @@ def can_slice_array(x):
         or data_adapter_utils.is_scipy_sparse(x)
         or data_adapter_utils.is_pandas_data_frame(x)
         or data_adapter_utils.is_pandas_series(x)
-        or hasattr(x, "__array__")
         or backend.ops.is_tensor(x)
+        or hasattr(x, "__array__")
     )
 
 
@@ -393,18 +420,10 @@ def convert_to_sliceable(arrays, target_backend=None):
             sliceable_class = PandasSeriesSliceable
         elif data_adapter_utils.is_scipy_sparse(x):
             sliceable_class = ScipySparseSliceable
+        elif backend.ops.is_tensor(x):
+            sliceable_class = NativeArraySliceable
         elif hasattr(x, "__array__"):
             x = np.asarray(x)
-            sliceable_class = NumpySliceable
-        elif backend.ops.is_tensor(x):
-            # Generic fallback for pluggable backend tensors (e.g. MLX).
-            try:
-                res = np.asarray(x)
-                if res.dtype == object:
-                    raise ValueError("np.asarray returned an object array")
-                x = res
-            except (ValueError, TypeError, RuntimeError):
-                x = backend.ops.convert_to_numpy(x)
             sliceable_class = NumpySliceable
         else:
             raise ValueError(

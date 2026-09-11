@@ -1,3 +1,5 @@
+from unittest import mock
+
 import jax
 import jax.experimental.sparse as jax_sparse
 import numpy as np
@@ -12,9 +14,91 @@ from keras.src import testing
 from keras.src.distribution import distribution_lib as dist_lib
 from keras.src.testing.test_utils import named_product
 from keras.src.trainers.data_adapters import array_data_adapter
+from keras.src.trainers.data_adapters import array_slicing
+from keras.src.trainers.data_adapters.data_adapter import DataAdapter
+
+
+class _NativeArray:
+    def __init__(self, array):
+        self.array = np.asarray(array)
+        self.shape = self.array.shape
+        self.dtype = self.array.dtype
+
+    def __array__(self, dtype=None, copy=None):
+        raise AssertionError(
+            "Native arrays should not be converted through NumPy"
+        )
+
+    def __getitem__(self, indices):
+        if isinstance(indices, np.ndarray):
+            raise ValueError("NumPy indices are unsupported")
+        return _NativeArray(self.array[indices])
 
 
 class TestArrayDataAdapter(testing.TestCase):
+    def test_native_iterator_default(self):
+        class TestAdapter(DataAdapter):
+            def get_numpy_iterator(self):
+                return iter([np.array([1, 2])])
+
+        batch = next(TestAdapter().get_native_iterator())
+        self.assertAllEqual(batch, [1, 2])
+
+    @parameterized.named_parameters(
+        ("no_shuffle", False),
+        ("batch_shuffle", "batch"),
+        ("global_shuffle", True),
+    )
+    def test_native_array_iterator(self, shuffle):
+        x = _NativeArray(np.arange(24, dtype="float32").reshape((8, 3)))
+
+        with (
+            mock.patch.object(
+                backend.ops,
+                "is_tensor",
+                side_effect=lambda value: isinstance(value, _NativeArray),
+            ),
+            mock.patch.object(
+                backend.ops,
+                "convert_to_tensor",
+                side_effect=lambda indices: indices.tolist(),
+            ),
+        ):
+            adapter = array_data_adapter.ArrayDataAdapter(
+                x, batch_size=3, shuffle=shuffle
+            )
+            batches = list(adapter.get_native_iterator())
+
+        self.assertLen(batches, 3)
+        self.assertIsInstance(batches[0], _NativeArray)
+        values = np.concatenate([batch.array for batch in batches])
+        self.assertAllEqual(np.sort(values[:, 0]), np.arange(0, 24, 3))
+
+    def test_native_array_sliceable_conversions(self):
+        x = _NativeArray(np.arange(6, dtype="float32").reshape((2, 3)))
+        with (
+            mock.patch.object(backend.ops, "cast", return_value=x) as cast,
+            mock.patch.object(
+                backend.ops, "convert_to_numpy", return_value=x.array
+            ) as convert_to_numpy,
+        ):
+            self.assertIs(
+                array_slicing.NativeArraySliceable.cast(x, "float16"), x
+            )
+            self.assertIs(
+                array_slicing.NativeArraySliceable.convert_to_numpy(x), x.array
+            )
+
+        cast.assert_called_once_with(x, "float16")
+        convert_to_numpy.assert_called_once_with(x)
+        for method in (
+            array_slicing.NativeArraySliceable.convert_to_tf_dataset_compatible,
+            array_slicing.NativeArraySliceable.convert_to_jax_compatible,
+            array_slicing.NativeArraySliceable.convert_to_torch_compatible,
+        ):
+            with self.assertRaises(NotImplementedError):
+                method(x)
+
     def make_array(self, array_type, shape, dtype):
         x = np.array([[i] * shape[1] for i in range(shape[0])], dtype=dtype)
         if array_type == "np":
