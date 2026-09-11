@@ -420,7 +420,7 @@ def convert_to_sliceable(arrays, target_backend=None):
             sliceable_class = PandasSeriesSliceable
         elif data_adapter_utils.is_scipy_sparse(x):
             sliceable_class = ScipySparseSliceable
-        elif backend.ops.is_tensor(x):
+        elif backend.ops.is_tensor(x) and target_backend in (None, "numpy"):
             sliceable_class = NativeArraySliceable
         elif hasattr(x, "__array__"):
             x = np.asarray(x)
